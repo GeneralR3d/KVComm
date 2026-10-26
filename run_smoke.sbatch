@@ -40,7 +40,7 @@ hostname
 nvidia-smi
 
 export NLTK_DATA="$HOME/nltk_data_kvcomm"
-python - <<'PY'
+"$KVCOMM_PYTHON" -u - <<'PY'
 import torch
 import transformers
 
