@@ -60,8 +60,8 @@ PY
 # Run all six methods sequentially using the same models and examples:
 # skyline, baseline, KVComm, AC, NLD, then CIPHER.
 "$KVCOMM_PYTHON" -u - \
-  --model_A Qwen/Qwen3-8B \
-  --model_B Qwen/Qwen3-8B \
+  --model_A Qwen/Qwen3-4B \
+  --model_B Qwen/Qwen3-4B \
   --device cuda:0 \
   --test_task tipsheets \
   --do_test_skyline \
