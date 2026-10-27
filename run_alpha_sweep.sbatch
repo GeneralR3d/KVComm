@@ -64,9 +64,13 @@ PY
 
 "$KVCOMM_PYTHON" -m pip freeze > "logs/environment-${SLURM_JOB_ID}.txt"
 
+# One CSV per job, appended immediately after each successful evaluation.
+export KVCOMM_RESULTS_CSV="logs/alpha-sweep-${SLURM_JOB_ID}-results.csv"
+echo "Communication results CSV: $KVCOMM_RESULTS_CSV"
+
 # Exact --test_task names from dataloader.get_evaluator (seven datasets).
 # The standard hotpotqa, qasper, and musique evaluators sample 500 examples;
-# --limit 0 evaluates every example supplied by each evaluator.
+# --limit below controls evaluation size; 0 uses every supplied example.
 TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
 ALPHAS=(1.0 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.0)
 
@@ -89,16 +93,32 @@ for test_task in "${TEST_TASKS[@]}"; do
       --top_layers 0.7 \
       --alpha "$alpha" \
       --calib_size 1 \
-      --limit 2 \
+      --limit 0 \
       --seed 42 \
       --run_name "alpha-sweep-${SLURM_JOB_ID}-${test_task}-alpha-${alpha}" <<'PY'
+import csv
+import os
+from pathlib import Path
 import runpy
 
 import torch
 
 # Keep the experiment and memory counters in the same Python process.
 try:
-    runpy.run_path("com.py", run_name="__main__")
+    # main() returns the final evaluation score after layer calibration.
+    # Loading without __main__ lets us capture that value directly.
+    experiment = runpy.run_path("com.py")
+    config = experiment["parse_args"]()
+    communication_result = experiment["main"](config)
+
+    # Close the CSV after each row so completed runs survive a later failure.
+    results_path = Path(os.environ["KVCOMM_RESULTS_CSV"])
+    with results_path.open("a", newline="") as output:
+        writer = csv.writer(output)
+        if output.tell() == 0:
+            writer.writerow(["test_task", "alpha", "communication_result"])
+        writer.writerow([config.test_task, config.alpha, float(communication_result)])
+    print(f"Saved communication result to {results_path}: {communication_result}", flush=True)
 finally:
     # Also report peaks after a Python exception, including CUDA out-of-memory.
     if torch.cuda.is_initialized():
