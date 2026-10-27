@@ -72,7 +72,7 @@ PY
   --do_test_cipher \
   --top_layers 0.3 \
   --calib_size 1 \
-  --limit 2 \
+  --limit 0 \
   --seed 42 \
   --run_name "smoke-${SLURM_JOB_ID}" <<'PY'
 import runpy
