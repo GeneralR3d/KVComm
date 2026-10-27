@@ -15,13 +15,13 @@ set -euo pipefail
 
 module load anaconda
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate kvcomm_cf
+conda activate kvcomm_qwen
 
 # Show which Python the shell selected.
 python -u -c 'import sys; print("Shell Python:", sys.executable)'
 
 # Use the exact environment path from your conda list output.
-KVCOMM_PYTHON="/tc1home/FYP/dtuan001/.conda/envs/kvcomm_cf/bin/python"
+KVCOMM_PYTHON="/tc1home/FYP/dtuan001/.conda/envs/kvcomm_qwen/bin/python"
 
 "$KVCOMM_PYTHON" -u - <<'PY'
 import sys
