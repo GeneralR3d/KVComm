@@ -58,7 +58,7 @@ PY
 "$KVCOMM_PYTHON" -m pip freeze > "logs/environment-${SLURM_JOB_ID}.txt"
 
 # Run the baseline, then KV sharing using the same models and examples.
-"$KVCOMM_PYTHON" -u com.py \
+"$KVCOMM_PYTHON" -u - \
   --model_A Qwen/Qwen2.5-1.5B-Instruct \
   --model_B Qwen/Qwen2.5-1.5B-Instruct \
   --device cuda:0 \
@@ -69,4 +69,22 @@ PY
   --calib_size 1 \
   --limit 2 \
   --seed 42 \
-  --run_name "smoke-${SLURM_JOB_ID}"
+  --run_name "smoke-${SLURM_JOB_ID}" <<'PY'
+import runpy
+
+import torch
+
+# Keep the experiment and memory counters in the same Python process.
+try:
+    runpy.run_path("com.py", run_name="__main__")
+finally:
+    # Also report peaks after a Python exception, including CUDA out-of-memory.
+    if torch.cuda.is_initialized():
+        gib = 1024 ** 3
+        print("\nPeak GPU memory for the full smoke test (cuda:0):", flush=True)
+        print(f"  PyTorch allocated: {torch.cuda.max_memory_allocated(0) / gib:.3f} GiB", flush=True)
+        print(f"  PyTorch reserved:  {torch.cuda.max_memory_reserved(0) / gib:.3f} GiB", flush=True)
+        print("  Reserved includes PyTorch's cache; CUDA context and non-PyTorch allocations are excluded.", flush=True)
+    else:
+        print("\nPeak GPU memory unavailable: CUDA was not initialized.", flush=True)
+PY
