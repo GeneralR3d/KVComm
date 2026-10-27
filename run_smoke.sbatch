@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
+#SBATCH --time=06:00:00
 #SBATCH --job-name=kvcomm-smoke
 #SBATCH --output=logs/kvcomm-%j.out
 #SBATCH --error=logs/kvcomm-%j.err
@@ -60,8 +60,8 @@ PY
 # Run all six methods sequentially using the same models and examples:
 # skyline, baseline, KVComm, AC, NLD, then CIPHER.
 "$KVCOMM_PYTHON" -u - \
-  --model_A Qwen/Qwen2.5-1.5B-Instruct \
-  --model_B Qwen/Qwen2.5-1.5B-Instruct \
+  --model_A Qwen/Qwen3.5-9B \
+  --model_B Qwen/Qwen3.5-9B \
   --device cuda:0 \
   --test_task tipsheets \
   --do_test_skyline \
