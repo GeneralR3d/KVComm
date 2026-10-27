@@ -1,5 +1,7 @@
 # Qwen-only runtime. Use a separate environment from requirements.txt.
 transformers==5.21.0
+# Old PEFT inherited from a cloned environment imports the removed HybridCache.
+peft==0.21.2
 torch>=2.6
 accelerate
 datasets

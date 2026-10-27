@@ -20,6 +20,20 @@ python -m pip install -r requirements-qwen.txt
 Do not install `requirements.txt` into this environment afterward: it pins
 the legacy version. Keep the legacy environment separately if you use it.
 
+If cloning an existing environment, upgrade both pinned packages:
+
+```bash
+python -m pip install --upgrade "transformers==5.21.0" "peft==0.21.2"
+python -m pip check
+python -c 'from transformers.trainer_utils import set_seed; import transformers, peft; print(transformers.__version__, peft.__version__)'
+```
+
+An older PEFT can fail on import with `cannot import name 'HybridCache'`.
+Transformers imports installed PEFT from `trainer_utils`, which the entry
+points use for `set_seed`, even though these experiments do not train adapters.
+The original CPU test environment had no PEFT installed, so the initial
+verification did not expose this cloned-environment incompatibility.
+
 ## Run a small comparison
 
 From the repository root, run the same checkpoint, dataset, and seed for the
@@ -113,5 +127,7 @@ decode cache growth, tracing, repeated calibration, two senders, activation
 injection, tokenizer behavior, CLI imports, and invalid configurations.
 
 During development: macOS ARM64 CPU, Python 3.13.5, PyTorch 2.14.1,
-Transformers 5.21.0. No CUDA GPU was available. These tests establish software
-compatibility, not pretrained-model communication accuracy.
+Transformers 5.21.0. All 67 tests also passed with PEFT 0.21.2 installed,
+after reproducing the `HybridCache` import failure with PEFT 0.17.1.
+No CUDA GPU was available. These tests establish software compatibility,
+not pretrained-model communication accuracy.
