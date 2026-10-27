@@ -5,9 +5,9 @@ import wandb
 import datetime
 import logging
 from dataclasses import dataclass, field
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
-from models import CVCommunicator
+from model_runtime import configure_qwen_tokenizer, get_cv_communicator, load_experiment_model
 from utils import setup_logging, log_gpu_info, generate_run_name
 from dataloader import get_mix_evaluator
 from eval_online import CommunicationEvaluator
@@ -21,6 +21,7 @@ class AlignConfig:
     # model configuration
     model_A: str = "meta-llama/Llama-3.1-8B-Instruct"
     model_B: str = "meta-llama/Llama-3.1-8B-Instruct"
+    qwen_enable_thinking: bool = False
     max_input_length: int = 64 * 1000
     # Communication configuration
     layer_from: int = 0
@@ -88,13 +89,14 @@ def main(cfg: AlignConfig):
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model_A = AutoModelForCausalLM.from_pretrained(cfg.model_A, device_map={"": cfg.device}, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
-    model_B = AutoModelForCausalLM.from_pretrained(cfg.model_B, device_map={"": cfg.device}, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
+    model_A = load_experiment_model(cfg.model_A, cfg.device, torch.bfloat16)
+    model_B = load_experiment_model(cfg.model_B, cfg.device, torch.bfloat16)
     model_A.eval()
     model_B.eval()
 
     model_A.name = cfg.model_A
     model_B.name = cfg.model_B
+    tokenizer = configure_qwen_tokenizer(tokenizer, (model_A, model_B), cfg.qwen_enable_thinking)
 
     evaluator = get_mix_evaluator(cfg.test_task, cfg.mix_method)
     
@@ -103,6 +105,7 @@ def main(cfg: AlignConfig):
 
     results = None
     if cfg.do_test:
+        CVCommunicator = get_cv_communicator(model_A, model_B)
         communication_evaluator = CommunicationEvaluator(evaluator, tokenizer, cfg.use_wandb, cfg.max_input_length, cfg)
         cv = CVCommunicator(model_A, model_B, cfg.layer_from, cfg.layer_to, layers_list=cfg.layers_list, top_layers=cfg.top_layers, apply_attn_tracer=True, shift_back=False).to(cfg.device)
         results = communication_evaluator.test(model_A, cv, limit=cfg.limit, calib_interval=cfg.calib_interval)

@@ -10,7 +10,10 @@ A framework for communicating between Large Language Models (LLMs), focusing on 
 pip install -r requirements.txt
 ```
 
-Note: Requires `transformers==4.53.3` specifically.
+Note: The original Llama/Gemma runtime requires `transformers==4.53.3` specifically.
+For Qwen2/2.5, Qwen3, and Qwen3 MoE on Transformers 5.21.0, install
+`requirements-qwen.txt` in a separate environment and follow the
+[Qwen migration guide](docs/qwen-migration.md).
 
 ## Datasets
 

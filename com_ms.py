@@ -5,9 +5,9 @@ import wandb
 import datetime
 import logging
 from dataclasses import dataclass, field
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
-from models_ms import CVCommunicator
+from model_runtime import configure_qwen_tokenizer, get_cv_communicator, load_experiment_model
 from models_cipher import CipherAgent
 from typing import Literal
 from utils import setup_logging, log_gpu_info, generate_run_name_multi_agent
@@ -26,6 +26,7 @@ class AlignConfig:
     model_A1: str = "meta-llama/Llama-3.1-8B-Instruct"
     model_A2: str = "meta-llama/Llama-3.1-8B-Instruct"
     model_B: str = "meta-llama/Llama-3.1-8B-Instruct"
+    qwen_enable_thinking: bool = False
     max_input_length: int = 64 * 1000
     # Communication configuration
     layer_from: int = 0
@@ -63,7 +64,7 @@ class AlignConfig:
     log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 def prepare_model(model_name: str, device: str):
-    model = AutoModelForCausalLM.from_pretrained(model_name, device_map={"": device}, torch_dtype=torch.bfloat16, attn_implementation="sdpa")
+    model = load_experiment_model(model_name, device, torch.bfloat16)
     model.eval()
     model.name = model_name
     # special case for Gemma
@@ -117,6 +118,7 @@ def main(cfg: AlignConfig):
     model_A1 = prepare_model(cfg.model_A1, cfg.device)
     model_A2 = prepare_model(cfg.model_A2, cfg.device)
     model_B = prepare_model(cfg.model_B, cfg.device)
+    tokenizer = configure_qwen_tokenizer(tokenizer, (model_A1, model_A2, model_B), cfg.qwen_enable_thinking)
 
     evaluator = get_multi_agent_evaluator(cfg.test_task)
     
@@ -125,6 +127,7 @@ def main(cfg: AlignConfig):
 
     results = None
     if cfg.do_test:
+        CVCommunicator = get_cv_communicator(model_A1, model_A2, model_B)
         communication_evaluator = CommunicationEvaluator(evaluator, tokenizer, cfg.use_wandb, cfg.max_input_length)
         if cfg.top_layers > 0:
             cv = CVCommunicator(model_A1, model_A2, model_B, cfg.layer_from, cfg.layer_to, layers_list=cfg.layers_list, top_layers=cfg.top_layers, apply_attn_tracer=True).to(cfg.device)
