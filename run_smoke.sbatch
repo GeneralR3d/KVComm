@@ -57,14 +57,19 @@ PY
 
 "$KVCOMM_PYTHON" -m pip freeze > "logs/environment-${SLURM_JOB_ID}.txt"
 
-# Run the baseline, then KV sharing using the same models and examples.
+# Run all six methods sequentially using the same models and examples:
+# skyline, baseline, KVComm, AC, NLD, then CIPHER.
 "$KVCOMM_PYTHON" -u - \
   --model_A Qwen/Qwen2.5-1.5B-Instruct \
   --model_B Qwen/Qwen2.5-1.5B-Instruct \
   --device cuda:0 \
   --test_task tipsheets \
+  --do_test_skyline \
   --do_test_baseline \
   --do_test \
+  --do_test_ac \
+  --do_test_nld \
+  --do_test_cipher \
   --top_layers 0.3 \
   --calib_size 1 \
   --limit 2 \
