@@ -1,12 +1,12 @@
-"""Check sweep CSV output without models or a GPU.
+"""Check the sweep job's actual launch command without a GPU or cluster.
 
 Run: python3 -m unittest discover -s tests -p 'test_alpha_sweep_results.py' -v
+CSV scoring and recovery are covered in test_com_sweep.py.
 """
 
-import csv
+import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -17,89 +17,74 @@ import unittest
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
-class AlphaSweepResultsTests(unittest.TestCase):
+class AlphaSweepJobTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.workdir = Path(self.temp.name)
-        self.results_csv = self.workdir / "results.csv"
+        (self.workdir / "logs").mkdir()
+        self.capture = self.workdir / "launches.jsonl"
         script = (REPOSITORY / "run_alpha_sweep.sbatch").read_text()
-        # Exercise the actual per-run wrapper, replacing only the GPU workload.
-        self.wrapper = re.findall(r"<<'PY'\n(.*?)\nPY", script, re.DOTALL)[-1]
-        (self.workdir / "torch.py").write_text(
-            "from types import SimpleNamespace\n"
-            "cuda = SimpleNamespace(is_initialized=lambda: False)\n"
-        )
-        (self.workdir / "com.py").write_text(textwrap.dedent('''\
-            import argparse
+        # Execute the real job body after its cluster/environment preflight.
+        self.launch = "set -euo pipefail\n" + script.split(
+            "# One CSV per job, appended immediately after each successful evaluation.", 1)[1]
+        (self.workdir / "com_sweep.py").write_text(textwrap.dedent('''\
+            import json
             import os
-
-            def parse_args():
-                parser = argparse.ArgumentParser()
-                parser.add_argument("--test_task")
-                parser.add_argument("--alpha", type=float)
-                return parser.parse_args()
-
-            def main(cfg):
-                print("communication result: 1.0000, communication time: 3.48s")
-                if os.environ.get("FAIL_EXPERIMENT"):
-                    raise RuntimeError("experiment failed")
-                # Log rounding must not lose precision in the saved result.
-                print("communication result: 0.4321, communication time: 0.46s")
-                return float(os.environ.get("FINAL_SCORE", "0.432123456789"))
-
-            if __name__ == "__main__":
-                main(parse_args())
+            import sys
+            with open(os.environ["SWEEP_CAPTURE"], "a") as output:
+                output.write(json.dumps(sys.argv[1:]) + "\\n")
+            if os.environ.get("FAIL_SWEEP"):
+                sys.exit(9)
         '''))
 
-    def run_experiment(self, task="tipsheets", alpha="0.7", **overrides):
+    def run_job(self, job_id="123", **overrides):
         return subprocess.run(
-            [sys.executable, "-", "--test_task", task, "--alpha", alpha],
-            input=self.wrapper,
-            cwd=self.workdir,
-            env=dict(os.environ, KVCOMM_RESULTS_CSV=str(self.results_csv), **overrides),
-            text=True,
-            capture_output=True,
+            ["bash"], input=self.launch, cwd=self.workdir,
+            env=dict(os.environ, KVCOMM_PYTHON=sys.executable, SLURM_JOB_ID=job_id,
+                     SWEEP_CAPTURE=str(self.capture), **overrides),
+            text=True, capture_output=True,
         )
 
-    def read_rows(self):
-        with self.results_csv.open(newline="") as source:
-            reader = csv.DictReader(source)
-            self.assertEqual(reader.fieldnames,
-                             ["test_task", "alpha", "communication_result"])
-            return list(reader)
+    def calls(self):
+        return [json.loads(line) for line in self.capture.read_text().splitlines()]
 
-    def test_saves_final_score_instead_of_calibration_or_rounded_log(self):
-        result = self.run_experiment()
+    def argument(self, args, flag):
+        index = args.index(flag) + 1
+        end = next((i for i in range(index, len(args)) if args[i].startswith("--")), len(args))
+        return args[index:end]
+
+    def test_launches_one_runner_with_requested_77_cases(self):
+        result = self.run_job()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.results_csv.exists(), "completed score was not saved")
-        self.assertEqual(self.read_rows(), [
-            {"test_task": "tipsheets", "alpha": "0.7",
-             "communication_result": "0.432123456789"},
-        ])
+        self.assertEqual(len(self.calls()), 1)
+        args = self.calls()[0]
+        tasks = self.argument(args, "--test_tasks")
+        alphas = self.argument(args, "--alphas")
+        self.assertEqual(tasks, ["countries", "tipsheets", "hotpotqa", "qasper",
+                                 "musique", "multifieldqa_en", "twowikimqa"])
+        self.assertEqual(alphas, ["1.0", "0.9", "0.8", "0.7", "0.6", "0.5",
+                                  "0.4", "0.3", "0.2", "0.1", "0.0"])
+        self.assertEqual(len(tasks) * len(alphas), 77)
+        expected = {"--model_A": "Qwen/Qwen3-4B", "--model_B": "Qwen/Qwen3-4B",
+                    "--device": "cuda:0", "--top_layers": "0.7", "--calib_size": "1",
+                    "--limit": "2", "--seed": "42", "--max_input_length": "8192"}
+        for flag, value in expected.items():
+            self.assertEqual(self.argument(args, flag), [value])
+        self.assertNotIn("--do_test", args)
 
-    def test_appends_across_processes_without_losing_rows_or_repeating_header(self):
-        first = self.run_experiment()
-        self.assertEqual(first.returncode, 0, first.stderr)
-        second = self.run_experiment("countries", "0.0", FINAL_SCORE="0.0")
-        self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertTrue(self.results_csv.exists(), "completed scores were not saved")
-        self.assertEqual(self.read_rows(), [
-            {"test_task": "tipsheets", "alpha": "0.7",
-             "communication_result": "0.432123456789"},
-            {"test_task": "countries", "alpha": "0.0",
-             "communication_result": "0.0"},
-        ])
+    def test_output_paths_identify_the_cluster_job(self):
+        result = self.run_job(job_id="456")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.calls()[0]
+        self.assertEqual(self.argument(args, "--results_csv"), ["logs/alpha-sweep-456-results.csv"])
+        self.assertEqual(self.argument(args, "--run_name"), ["alpha-sweep-456"])
 
-    def test_failed_experiment_does_not_append_a_calibration_score(self):
-        first = self.run_experiment()
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertTrue(self.results_csv.exists(), "completed score was not saved")
-        original = self.results_csv.read_bytes()
-        failed = self.run_experiment("qasper", "0.6", FAIL_EXPERIMENT="1")
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("experiment failed", failed.stderr)
-        self.assertEqual(self.results_csv.read_bytes(), original)
+    def test_runner_failure_propagates_to_job(self):
+        result = self.run_job(FAIL_SWEEP="1")
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertEqual(len(self.calls()), 1)
+        self.assertNotIn("Completed", result.stdout)
 
 
 if __name__ == "__main__":

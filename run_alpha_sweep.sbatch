@@ -68,69 +68,28 @@ PY
 export KVCOMM_RESULTS_CSV="logs/alpha-sweep-${SLURM_JOB_ID}-results.csv"
 echo "Communication results CSV: $KVCOMM_RESULTS_CSV"
 
-# Exact --test_task names from dataloader.get_evaluator (seven datasets).
-# The standard hotpotqa, qasper, and musique evaluators sample 500 examples;
-# --limit below controls evaluation size; 0 uses every supplied example.
+# Seven datasets x eleven alphas = 77 evaluation cases.
+# Smoke-test two examples per case; calibration uses one example per dataset.
 TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
 ALPHAS=(1.0 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.0)
 
-# Run KVComm only, sequentially in one allocation. A fresh Python process for
-# each pair releases model/GPU memory and keeps per-run peak counters separate.
-# Keep calibration size, seed, and all other settings fixed across alpha values.
-# Each pair gets its own snapshots/alpha-sweep-<job>-<task>-alpha-<value>_* folder.
-run_index=0
+# One process loads the model pair once and calibrates once per dataset.
+# The runner saves successful scores, per-case memory peaks, and failure details.
 total_runs=$(( ${#TEST_TASKS[@]} * ${#ALPHAS[@]} ))
-for test_task in "${TEST_TASKS[@]}"; do
-  for alpha in "${ALPHAS[@]}"; do
-    run_index=$((run_index + 1))
-    echo "[$run_index/$total_runs] task=$test_task alpha=$alpha KVComm=0.7"
-    "$KVCOMM_PYTHON" -u - \
-      --model_A Qwen/Qwen3-4B \
-      --model_B Qwen/Qwen3-4B \
-      --device cuda:0 \
-      --test_task "$test_task" \
-      --do_test \
-      --top_layers 0.7 \
-      --alpha "$alpha" \
-      --calib_size 1 \
-      --limit 0 \
-      --seed 42 \
-      --run_name "alpha-sweep-${SLURM_JOB_ID}-${test_task}-alpha-${alpha}" <<'PY'
-import csv
-import os
-from pathlib import Path
-import runpy
+echo "Running $total_runs cases with one model pair; evaluation limit=2 per case."
 
-import torch
+"$KVCOMM_PYTHON" -u com_sweep.py \
+  --model_A Qwen/Qwen3-4B \
+  --model_B Qwen/Qwen3-4B \
+  --device cuda:0 \
+  --test_tasks "${TEST_TASKS[@]}" \
+  --alphas "${ALPHAS[@]}" \
+  --top_layers 0.7 \
+  --calib_size 1 \
+  --max_input_length 8192 \
+  --limit 2 \
+  --seed 42 \
+  --results_csv "$KVCOMM_RESULTS_CSV" \
+  --run_name "alpha-sweep-${SLURM_JOB_ID}"
 
-# Keep the experiment and memory counters in the same Python process.
-try:
-    # main() returns the final evaluation score after layer calibration.
-    # Loading without __main__ lets us capture that value directly.
-    experiment = runpy.run_path("com.py")
-    config = experiment["parse_args"]()
-    communication_result = experiment["main"](config)
-
-    # Close the CSV after each row so completed runs survive a later failure.
-    results_path = Path(os.environ["KVCOMM_RESULTS_CSV"])
-    with results_path.open("a", newline="") as output:
-        writer = csv.writer(output)
-        if output.tell() == 0:
-            writer.writerow(["test_task", "alpha", "communication_result"])
-        writer.writerow([config.test_task, config.alpha, float(communication_result)])
-    print(f"Saved communication result to {results_path}: {communication_result}", flush=True)
-finally:
-    # Also report peaks after a Python exception, including CUDA out-of-memory.
-    if torch.cuda.is_initialized():
-        gib = 1024 ** 3
-        print("\nPeak GPU memory for the current dataset/alpha run (cuda:0):", flush=True)
-        print(f"  PyTorch allocated: {torch.cuda.max_memory_allocated(0) / gib:.3f} GiB", flush=True)
-        print(f"  PyTorch reserved:  {torch.cuda.max_memory_reserved(0) / gib:.3f} GiB", flush=True)
-        print("  Reserved includes PyTorch's cache; CUDA context and non-PyTorch allocations are excluded.", flush=True)
-    else:
-        print("\nPeak GPU memory unavailable: CUDA was not initialized.", flush=True)
-PY
-  done
-done
-
-echo "Completed all $total_runs dataset/alpha runs."
+echo "Sweep finished. Check $KVCOMM_RESULTS_CSV and its JSONL companion for case results and failures."
