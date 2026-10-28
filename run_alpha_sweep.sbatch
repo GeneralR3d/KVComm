@@ -87,7 +87,7 @@ echo "Running $total_runs cases with one model pair; evaluation limit=2 per case
   --top_layers 0.7 \
   --calib_size 1 \
   --max_input_length 8192 \
-  --limit 2 \
+  --limit 0 \
   --seed 42 \
   --results_csv "$KVCOMM_RESULTS_CSV" \
   --run_name "alpha-sweep-${SLURM_JOB_ID}"
