@@ -14,7 +14,7 @@ import weakref
 
 import pytest
 import torch
-from transformers import Qwen3Config, Qwen3ForCausalLM
+from transformers import LlamaConfig, LlamaForCausalLM
 
 
 @pytest.fixture
@@ -29,14 +29,14 @@ def sweep(monkeypatch):
 def model():
     torch.set_num_threads(1)
     torch.manual_seed(7)
-    cfg = Qwen3Config(
+    cfg = LlamaConfig(
         vocab_size=64, hidden_size=32, intermediate_size=48,
         num_hidden_layers=3, num_attention_heads=4, num_key_value_heads=2,
         head_dim=8, max_position_embeddings=128, attention_dropout=0.0,
         pad_token_id=0, bos_token_id=1, eos_token_id=63,
     )
     cfg._attn_implementation = "sdpa"
-    return Qwen3ForCausalLM(cfg).eval()
+    return LlamaForCausalLM(cfg).eval()
 
 
 class Tokenizer:
@@ -99,7 +99,7 @@ def offline(sweep, model, monkeypatch):
         tokenizers.append(Tokenizer())
         return tokenizers[-1]
 
-    monkeypatch.setattr(sweep, "load_experiment_model", load)
+    monkeypatch.setattr(sweep.AutoModelForCausalLM, "from_pretrained", load)
     monkeypatch.setattr(sweep.AutoConfig, "from_pretrained", lambda *a, **k: copy.deepcopy(model.config))
     monkeypatch.setattr(sweep.AutoTokenizer, "from_pretrained", tokenizer)
     monkeypatch.setattr(sweep, "get_evaluator", dataset)
@@ -132,7 +132,7 @@ def test_default_sweep_and_cli_lists(sweep):
     cfg = sweep.parse_args([])
     assert len(cfg.test_tasks) == 7
     assert cfg.alphas == [i / 10 for i in range(10, -1, -1)]
-    assert cfg.model_A == cfg.model_B == "Qwen/Qwen3-4B"
+    assert cfg.model_A == cfg.model_B == "meta-llama/Llama-3.1-8B-Instruct"
     assert cfg.max_input_length == 8192
     assert cfg.top_layers == 0.7
     cfg = sweep.parse_args(["--test_tasks", "qasper", "tipsheets", "--alphas", "0.7", "0.0"])
@@ -207,7 +207,8 @@ def test_pair_loaded_once_and_calibration_once_per_dataset(sweep, offline, tmp_p
     assert all(ref() is None for ref in offline.datasets)
     receiver = offline.loaded[1]
     assert receiver.config._attn_implementation == "sdpa"
-    assert all(not getattr(block.self_attn, "_kvcomm_trace", False) for block in receiver.model.layers)
+    from transformers.models.llama.modeling_llama import LlamaAttention
+    assert all(type(block.self_attn) is LlamaAttention for block in receiver.model.layers)
     assert all(getattr(block.self_attn, "attn_inputs", None) is None for block in receiver.model.layers)
 
 
@@ -238,9 +239,10 @@ def test_sender_limits_logits_without_changing_cache(sweep, model):
         A, B = model, receiver
 
         def generate(self, ids, out_A_past_key_values, **kwargs):
-            for actual, native in zip(out_A_past_key_values.layers, expected.layers):
-                torch.testing.assert_close(actual.keys, native.keys)
-                torch.testing.assert_close(actual.values, native.values)
+            for actual, native in zip(out_A_past_key_values.key_cache, expected.key_cache):
+                torch.testing.assert_close(actual, native)
+            for actual, native in zip(out_A_past_key_values.value_cache, expected.value_cache):
+                torch.testing.assert_close(actual, native)
             return torch.cat((ids, torch.tensor([[10]])), dim=-1)
 
     seen = []
@@ -365,22 +367,21 @@ def test_wandb_runs_close_after_recoverable_failure(sweep, offline, tmp_path, mo
     assert runs[0].records[0]["communication_result"] is None
 
 
-def test_communicator_restores_existing_attention_attributes(sweep, offline, tmp_path):
+def test_communicator_restores_original_attention_modules_after_failure(sweep, offline, tmp_path):
     cfg = config(sweep, tmp_path)
     with sweep.ExperimentSession(cfg) as session:
-        attention = session.model_B.model.layers[0].self_attn
-        attention._kvcomm_trace = False
-        attention._kvcomm_prefill = False
-        attention.attn_inputs = None
+        originals = [block.self_attn for block in session.model_B.model.layers]
         with pytest.raises(torch.OutOfMemoryError):
             with session.communicator(trace=True) as cv:
-                attention.attn_inputs = (torch.ones(2),)
+                attention = session.model_B.model.layers[0].self_attn
+                assert attention is not originals[0]
+                attention.attn_inputs = {"query": torch.ones(2)}
                 cv.B_attn_weights[0] = torch.ones(2)
                 raise torch.OutOfMemoryError("in context")
         assert cv.B_attn_weights == {}
         assert attention.attn_inputs is None
-        assert not attention._kvcomm_trace
-        assert not attention._kvcomm_prefill
+        assert all(block.self_attn is original for block, original
+                   in zip(session.model_B.model.layers, originals))
         assert session.model_B.config._attn_implementation == "sdpa"
 
 

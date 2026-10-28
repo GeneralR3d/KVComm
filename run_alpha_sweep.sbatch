@@ -21,13 +21,13 @@ set -euo pipefail
 
 module load anaconda
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate kvcomm_qwen
+conda activate kvcomm_cf
 
 # Show which Python the shell selected.
 python -u -c 'import sys; print("Shell Python:", sys.executable)'
 
 # Use the exact environment path from your conda list output.
-KVCOMM_PYTHON="/tc1home/FYP/dtuan001/.conda/envs/kvcomm_qwen/bin/python"
+KVCOMM_PYTHON="/tc1home/FYP/dtuan001/.conda/envs/kvcomm_cf/bin/python"
 
 "$KVCOMM_PYTHON" -u - <<'PY'
 import sys
@@ -79,8 +79,8 @@ total_runs=$(( ${#TEST_TASKS[@]} * ${#ALPHAS[@]} ))
 echo "Running $total_runs cases with one model pair; evaluation limit=2 per case."
 
 "$KVCOMM_PYTHON" -u com_sweep.py \
-  --model_A Qwen/Qwen3-4B \
-  --model_B Qwen/Qwen3-4B \
+  --model_A meta-llama/Llama-3.1-8B-Instruct \
+  --model_B meta-llama/Llama-3.1-8B-Instruct \
   --device cuda:0 \
   --test_tasks "${TEST_TASKS[@]}" \
   --alphas "${ALPHAS[@]}" \

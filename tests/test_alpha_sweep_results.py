@@ -66,7 +66,8 @@ class AlphaSweepJobTests(unittest.TestCase):
         self.assertEqual(alphas, ["1.0", "0.9", "0.8", "0.7", "0.6", "0.5",
                                   "0.4", "0.3", "0.2", "0.1", "0.0"])
         self.assertEqual(len(tasks) * len(alphas), 77)
-        expected = {"--model_A": "Qwen/Qwen3-4B", "--model_B": "Qwen/Qwen3-4B",
+        expected = {"--model_A": "meta-llama/Llama-3.1-8B-Instruct",
+                    "--model_B": "meta-llama/Llama-3.1-8B-Instruct",
                     "--device": "cuda:0", "--top_layers": "0.7", "--calib_size": "1",
                     "--limit": "2", "--seed": "42", "--max_input_length": "8192"}
         for flag, value in expected.items():

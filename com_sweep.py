@@ -1,13 +1,14 @@
-"""Run a Qwen KVComm sweep with one resident sender/receiver pair.
+"""Run a KVComm sweep with one resident sender/receiver pair.
 
 From the repository root, inside an allocated GPU job:
-    conda activate kvcomm_qwen
+    conda activate kvcomm_cf
     python -u com_sweep.py
 
-First check the formerly failing Qasper path with two examples/two alphas:
+Quick check with two Qasper examples and two alphas:
     python -u com_sweep.py --test_tasks qasper --alphas 1.0 0.0 --limit 2
 
-Uses requirements-qwen.txt (Transformers 5.21.0). The default 8,192-token
+Uses the existing requirements.txt (Transformers 4.53.3) and models.py runtime.
+The default models match com.py. The default 8,192-token
 budget covers sender + receiver inputs, excluding generated tokens. Results
 use this changed context setting and must be compared at the same cap.
 The run_alpha_sweep.sbatch job launches this runner; com.py remains independent.
@@ -34,14 +35,13 @@ from types import SimpleNamespace
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.trainer_utils import set_seed
 from tqdm import tqdm
 
 from eval import CommunicationEvaluator
 from layer_importance import calc_layer_importance, get_top_layers
-from model_runtime import (configure_qwen_tokenizer, get_cv_communicator,
-                           load_experiment_model, validate_qwen_config)
+from models import CVCommunicator
 
 
 TEST_TASKS = ("countries", "tipsheets", "hotpotqa", "qasper", "musique",
@@ -60,9 +60,8 @@ class AlignConfig:
     device: str = "cuda:0"
     seed: int = 42
     snapshot_path: str = "snapshots"
-    model_A: str = "Qwen/Qwen3-4B"
-    model_B: str = "Qwen/Qwen3-4B"
-    qwen_enable_thinking: bool = False
+    model_A: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_B: str = "meta-llama/Llama-3.1-8B-Instruct"
     max_input_length: int = 8192
     top_layers: float = 0.7
     calib_size: int = 1
@@ -126,10 +125,20 @@ class InputLimitError(ValueError):
     """A sample cannot be evaluated under the declared context policy."""
 
 
+def receiver_layers(model):
+    backbone = model.model
+    if hasattr(backbone, "language_model"):
+        backbone = backbone.language_model
+    return backbone.layers
+
+
 def clear_attention_tensors(cv):
-    cv.B_attn_weights.clear()
-    for block in cv.B.model.layers:
-        block.self_attn.attn_inputs = None
+    # The existing communicator only creates B_attn_weights during calibration.
+    if hasattr(cv, "B_attn_weights"):
+        cv.B_attn_weights.clear()
+    for block in receiver_layers(cv.B):
+        if hasattr(block.self_attn, "attn_inputs"):
+            block.self_attn.attn_inputs = None
 
 
 def release_memory(device):
@@ -172,25 +181,23 @@ class ExperimentSession:
             configs = [AutoConfig.from_pretrained(name) for name in
                        (self.cfg.model_A, self.cfg.model_B)]
             for config in configs:
-                if not validate_qwen_config(config):
-                    raise ValueError("com_sweep.py supports Qwen models only")
-                if int(self.cfg.top_layers * config.num_hidden_layers) == 0:
+                text_config = getattr(config, "text_config", config)
+                if int(self.cfg.top_layers * text_config.num_hidden_layers) == 0:
                     raise ValueError("top_layers would select zero layers")
-            # Reuse the communicator's architecture/cache-geometry validation
-            # before allocating either set of model weights.
-            from models_qwen import _validate_models
-            _validate_models(tuple(SimpleNamespace(config=c) for c in configs))
             tokenizer = AutoTokenizer.from_pretrained(self.cfg.model_B)
             if tokenizer.pad_token_id is None:
                 tokenizer.pad_token = tokenizer.eos_token
-            self.model_A = load_experiment_model(self.cfg.model_A, self.cfg.device, torch.float16)
-            self.model_B = load_experiment_model(self.cfg.model_B, self.cfg.device, torch.float16)
+            self.model_A = AutoModelForCausalLM.from_pretrained(
+                self.cfg.model_A, device_map={"": self.cfg.device},
+                torch_dtype=torch.float16, attn_implementation="sdpa")
+            self.model_B = AutoModelForCausalLM.from_pretrained(
+                self.cfg.model_B, device_map={"": self.cfg.device},
+                torch_dtype=torch.float16, attn_implementation="sdpa")
             for model, name in ((self.model_A, self.cfg.model_A), (self.model_B, self.cfg.model_B)):
                 model.eval()
                 model.requires_grad_(False)
                 model.name = name
-            self.tokenizer = configure_qwen_tokenizer(
-                tokenizer, (self.model_A, self.model_B), self.cfg.qwen_enable_thinking)
+            self.tokenizer = tokenizer
             logging.info("Loaded sender and receiver once; models remain resident across cases")
             return self
         except BaseException:
@@ -204,28 +211,25 @@ class ExperimentSession:
     @contextmanager
     def communicator(self, layers_list=None, trace=False):
         receiver = self.model_B
-        backend = receiver.config._attn_implementation
-        missing = object()
-        names = ("_kvcomm_trace", "_kvcomm_prefill", "attn_inputs")
-        saved = [(block.self_attn, {name: getattr(block.self_attn, name, missing)
-                                  for name in names}) for block in receiver.model.layers]
+        # models.py installs temporary attention modules for calibration. Keep
+        # the originals so repeated tasks reuse the resident weights and each
+        # tracer sees the original supported attention type.
+        saved = [(block, block.self_attn) for block in receiver_layers(receiver)]
         cv = None
         try:
-            cls = get_cv_communicator(self.model_A, receiver)
-            cv = cls(self.model_A, receiver, layers_list=layers_list,
-                     top_layers=self.cfg.top_layers, apply_attn_tracer=trace)
+            cv = CVCommunicator(
+                self.model_A, receiver, 0, len(saved) - 1,
+                layers_list=[-1] if layers_list is None else layers_list,
+                top_layers=self.cfg.top_layers, apply_attn_tracer=trace).eval()
             yield cv
         finally:
             if cv is not None:
                 clear_attention_tensors(cv)
-            receiver.set_attn_implementation(backend)
-            for attention, attrs in saved:
-                for name, value in attrs.items():
-                    if value is missing:
-                        if hasattr(attention, name):
-                            delattr(attention, name)
-                    else:
-                        setattr(attention, name, value)
+            for block, attention in saved:
+                # Also clean up a partially constructed calibration wrapper.
+                if block.self_attn is not attention:
+                    block.self_attn.attn_inputs = None
+                block.self_attn = attention
 
 
 class SweepCommunicationEvaluator(CommunicationEvaluator):
