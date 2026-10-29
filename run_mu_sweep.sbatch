@@ -67,7 +67,7 @@ PY
 # Seven datasets x five mu values = 35 evaluation cases.
 # Evaluate full datasets (--limit 0); calibration uses one example per dataset.
 TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
-MUS=(0 0.25 0.5 0.75 1)
+MUS=(0.5 0.75 1)
 
 # Each mu starts a fresh process that loads one model pair and calibrates once
 # per dataset. Alpha is fixed at zero, so selection uses the Gaussian prior.
