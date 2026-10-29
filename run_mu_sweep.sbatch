@@ -90,7 +90,6 @@ for mu in "${MUS[@]}"; do
     --sigma 10 \
     --top_layers 0.3 \
     --calib_size 1 \
-    --max_input_length 8192 \
     --limit 0 \
     --seed 42 \
     --results_csv "$KVCOMM_RESULTS_CSV" \
