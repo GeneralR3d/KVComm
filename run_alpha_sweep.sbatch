@@ -70,7 +70,7 @@ echo "Communication results CSV: $KVCOMM_RESULTS_CSV"
 
 # Seven datasets x eleven alphas = 77 evaluation cases.
 # Smoke-test two examples per case; calibration uses one example per dataset.
-TEST_TASKS=(qasper multifieldqa_en twowikimqa)
+TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
 ALPHAS=(1.0 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.0)
 
 # One process loads the model pair once and calibrates once per dataset.
@@ -84,7 +84,7 @@ echo "Running $total_runs cases with one model pair; evaluation limit=2 per case
   --device cuda:0 \
   --test_tasks "${TEST_TASKS[@]}" \
   --alphas "${ALPHAS[@]}" \
-  --top_layers 0.7 \
+  --top_layers 0.3 \
   --calib_size 1 \
   --limit 0 \
   --seed 42 \
