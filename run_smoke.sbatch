@@ -60,8 +60,8 @@ PY
 # Run all six methods sequentially using the same models and examples:
 # skyline, baseline, KVComm, AC, NLD, then CIPHER.
 "$KVCOMM_PYTHON" -u - \
-  --model_A meta-llama/Llama-3.2-3B-Instruct \
-  --model_B meta-llama/Llama-3.2-3B-Instruct \
+  --model_A google/gemma-3-1b-it \
+  --model_B google/gemma-3-1b-it \
   --device cuda:0 \
   --test_task tipsheets \
   --do_test_skyline \
