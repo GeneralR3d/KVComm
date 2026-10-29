@@ -67,7 +67,7 @@ PY
 # Seven datasets x five mu values = 35 evaluation cases.
 # Evaluate full datasets (--limit 0); calibration uses one example per dataset.
 TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
-MUS=(0.5 0.75 1)
+MUS=(0 0.25 0.5 0.75 1)
 
 # Each mu starts a fresh process that loads one model pair and calibrates once
 # per dataset. Alpha is fixed at zero, so selection uses the Gaussian prior.
@@ -81,8 +81,8 @@ for mu in "${MUS[@]}"; do
   echo "Starting mu=$mu; communication results CSV: $KVCOMM_RESULTS_CSV"
 
   "$KVCOMM_PYTHON" -u com_sweep.py \
-    --model_A Qwen/Qwen2.5-3B-Instruct \
-    --model_B Qwen/Qwen2.5-3B-Instruct \
+    --model_A meta-llama/Llama-3.2-3B-Instruct \
+    --model_B meta-llama/Llama-3.2-3B-Instruct \
     --device cuda:0 \
     --test_tasks "${TEST_TASKS[@]}" \
     --alphas 0.0 \
