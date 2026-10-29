@@ -79,8 +79,8 @@ total_runs=$(( ${#TEST_TASKS[@]} * ${#ALPHAS[@]} ))
 echo "Running $total_runs cases with one model pair; evaluation limit=2 per case."
 
 "$KVCOMM_PYTHON" -u com_sweep.py \
-  --model_A Qwen/Qwen2.5-3B-Instruct \
-  --model_B Qwen/Qwen2.5-3B-Instruct \
+  --model_A meta-llama/Llama-3.2-3B-Instruct \
+  --model_B meta-llama/Llama-3.2-3B-Instruct \
   --device cuda:0 \
   --test_tasks "${TEST_TASKS[@]}" \
   --alphas "${ALPHAS[@]}" \
