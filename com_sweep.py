@@ -8,9 +8,9 @@ Quick check with two Qasper examples and two alphas:
     python -u com_sweep.py --test_tasks qasper --alphas 1.0 0.0 --limit 2
 
 Uses the existing requirements.txt (Transformers 4.53.3) and models.py runtime.
-The default models match com.py. The default 8,192-token
-budget covers sender + receiver inputs, excluding generated tokens. Results
-use this changed context setting and must be compared at the same cap.
+The default models and 64,000-token input budget match com.py. When a dataset
+allows truncation, the original evaluator keeps the sender's beginning and end
+within the combined sender + receiver budget, excluding generated tokens.
 The run_alpha_sweep.sbatch job launches this runner; com.py remains independent.
 No resume, parallel evaluation, or automatic context reduction is performed.
 
@@ -62,7 +62,7 @@ class AlignConfig:
     snapshot_path: str = "snapshots"
     model_A: str = "meta-llama/Llama-3.1-8B-Instruct"
     model_B: str = "meta-llama/Llama-3.1-8B-Instruct"
-    max_input_length: int = 8192
+    max_input_length: int = 64 * 1000
     top_layers: float = 0.7
     calib_size: int = 1
     mu: float = 0.5
@@ -119,10 +119,6 @@ def validate_config(cfg):
         output = Path(cfg.results_csv)
         if output.resolve() == output.with_suffix(".jsonl").resolve():
             raise ValueError("CSV and JSONL diagnostics must use distinct paths; choose a .csv filename")
-
-
-class InputLimitError(ValueError):
-    """A sample cannot be evaluated under the declared context policy."""
 
 
 def receiver_layers(model):
@@ -233,8 +229,8 @@ class ExperimentSession:
 
 
 class SweepCommunicationEvaluator(CommunicationEvaluator):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, evaluator, tokenizer, use_wandb, max_input_length=64 * 1000):
+        super().__init__(evaluator, tokenizer, use_wandb, max_input_length)
         self.truncation_count = 0
         self.items_evaluated = 0
         self.sample_index = None
@@ -244,18 +240,11 @@ class SweepCommunicationEvaluator(CommunicationEvaluator):
     def truncate_input(self, input_ids_A, input_ids_B):
         a_len, b_len = input_ids_A.shape[-1], input_ids_B.shape[-1]
         self.input_lengths = {"sender_original": a_len, "receiver": b_len, "sender_used": a_len}
-        budget = self.max_input_length - b_len
-        if budget <= 0 or a_len == 0:
-            raise InputLimitError(f"No sender budget: sender={a_len}, receiver={b_len}, cap={self.max_input_length}")
-        if a_len > budget:
-            if not self.evaluator.truncate_input:
-                raise InputLimitError(f"Dataset prohibits truncation: sender={a_len}, receiver={b_len}, cap={self.max_input_length}")
-            head, tail = (budget + 1) // 2, budget // 2
-            # A zero tail must be an empty slice: -0 would retain the full input.
-            input_ids_A = torch.cat((input_ids_A[:, :head], input_ids_A[:, -tail:] if tail
-                                     else input_ids_A[:, :0]), dim=-1)
+        # Reuse com.py's evaluator policy, including the dataset's opt-out.
+        input_ids_A, input_ids_B = super().truncate_input(input_ids_A, input_ids_B)
+        self.input_lengths["sender_used"] = input_ids_A.shape[-1]
+        if input_ids_A.shape[-1] < a_len:
             self.truncation_count += 1
-            self.input_lengths["sender_used"] = budget
         logging.debug("sample=%s input_lengths=%s", self.sample_index, self.input_lengths)
         return input_ids_A, input_ids_B
 
@@ -350,9 +339,8 @@ def run_stage(session, cfg, stage, log_path, journal, dataset=None, importance=N
                 else:
                     record["communication_result"] = float(score)
             record["status"] = "success"
-        except (torch.OutOfMemoryError, InputLimitError) as error:
-            record.update(status="oom" if isinstance(error, torch.OutOfMemoryError) else "input_limit",
-                          error_type=type(error).__name__, error=str(error))
+        except torch.OutOfMemoryError as error:
+            record.update(status="oom", error_type=type(error).__name__, error=str(error))
             # A buffering logging handler can retain exc_info and every tensor
             # in its traceback. Preserve the diagnostic as text only.
             logging.error("Case failed; its partial score will not be saved\n%s", traceback.format_exc())

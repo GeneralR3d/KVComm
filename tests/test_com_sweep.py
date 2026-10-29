@@ -109,7 +109,7 @@ def offline(sweep, model, monkeypatch):
 def config(sweep, tmp_path, **kwargs):
     defaults = dict(device="cpu", snapshot_path=str(tmp_path),
                     test_tasks=["tipsheets"], alphas=[1.0, 0.0],
-                    max_input_length=96, limit=2, calib_size=1)
+                    limit=2, calib_size=1)
     defaults.update(kwargs)
     return sweep.AlignConfig(**defaults)
 
@@ -133,7 +133,7 @@ def test_default_sweep_and_cli_lists(sweep):
     assert len(cfg.test_tasks) == 7
     assert cfg.alphas == [i / 10 for i in range(10, -1, -1)]
     assert cfg.model_A == cfg.model_B == "meta-llama/Llama-3.1-8B-Instruct"
-    assert cfg.max_input_length == 8192
+    assert cfg.max_input_length == 64000
     assert cfg.top_layers == 0.7
     cfg = sweep.parse_args(["--test_tasks", "qasper", "tipsheets", "--alphas", "0.7", "0.0"])
     assert cfg.test_tasks == ["qasper", "tipsheets"]
@@ -166,31 +166,57 @@ def test_invalid_configuration_fails_before_loading(sweep, offline, tmp_path, ov
     assert not offline.loaded
 
 
-@pytest.mark.parametrize("budget,expected", [(5, [0, 1, 2, 8, 9]), (4, [0, 1, 8, 9]), (1, [0])])
-def test_middle_truncation_keeps_exact_budget(sweep, budget, expected):
+@pytest.mark.parametrize("allow_truncation", [True, False])
+def test_long_inputs_are_preserved(sweep, allow_truncation):
     dataset = Dataset()
-    ev = sweep.SweepCommunicationEvaluator(dataset, Tokenizer(), False, budget + 2)
-    a, b = ev.truncate_input(torch.arange(10)[None], torch.tensor([[20, 21]]))
-    assert a.tolist() == [expected]
-    assert b.tolist() == [[20, 21]]
-    assert ev.truncation_count == 1
+    dataset.truncate_input = allow_truncation
+    ev = sweep.SweepCommunicationEvaluator(dataset, Tokenizer(), False)
+    sender, receiver = torch.arange(20000)[None], torch.arange(9000)[None]
+    a, b = ev.truncate_input(sender, receiver)
+    assert a is sender
+    assert b is receiver
+    assert ev.truncation_count == 0
+    assert ev.input_lengths == {"sender_original": 20000, "sender_used": 20000, "receiver": 9000}
 
 
-@pytest.mark.parametrize("receiver_length", [5, 6])
-def test_zero_or_negative_sender_budget_is_a_failure(sweep, receiver_length):
-    ev = sweep.SweepCommunicationEvaluator(Dataset(), Tokenizer(), False, 5)
-    with pytest.raises(sweep.InputLimitError):
-        ev.truncate_input(torch.tensor([[1]]), torch.ones((1, receiver_length), dtype=torch.long))
-
-
-def test_exact_limit_and_prohibited_truncation(sweep):
+@pytest.mark.parametrize("allow_truncation", [True, False])
+def test_original_64000_token_policy(sweep, allow_truncation):
     dataset = Dataset()
-    dataset.truncate_input = False
-    ev = sweep.SweepCommunicationEvaluator(dataset, Tokenizer(), False, 5)
-    a, b = torch.tensor([[1, 2, 3]]), torch.tensor([[4, 5]])
-    assert ev.truncate_input(a, b)[0] is a
-    with pytest.raises(sweep.InputLimitError):
-        ev.truncate_input(torch.tensor([[1, 2, 3, 4]]), b)
+    dataset.truncate_input = allow_truncation
+    ev = sweep.SweepCommunicationEvaluator(dataset, Tokenizer(), False)
+    sender, receiver = torch.arange(70000)[None], torch.arange(2000)[None]
+    a, b = ev.truncate_input(sender, receiver)
+    assert b is receiver
+    if allow_truncation:
+        assert a.shape[-1] == 62000
+        torch.testing.assert_close(a[:, :31000], sender[:, :31000])
+        torch.testing.assert_close(a[:, 31000:], sender[:, -31000:])
+        assert ev.truncation_count == 1
+        assert ev.input_lengths["sender_used"] == 62000
+    else:
+        assert a is sender
+        assert ev.truncation_count == 0
+        assert ev.input_lengths["sender_used"] == 70000
+
+
+def test_context_limit_override_reaches_evaluation(sweep, offline, tmp_path):
+    result = sweep.main(config(sweep, tmp_path, max_input_length=32))
+    assert all(row["status"] == "success" for row in result)
+    assert all(row["max_input_length"] == 32 for row in records(tmp_path))
+    assert all(row["truncation_count"] == row["items_evaluated"] for row in records(tmp_path))
+    assert all(row["input_lengths"]["sender_used"] + row["input_lengths"]["receiver"] <= 32
+               for row in records(tmp_path))
+
+
+def test_prepared_prompts_over_previous_cap_are_preserved(sweep):
+    ev = sweep.SweepCommunicationEvaluator(Dataset(), Tokenizer(), False)
+    model = SimpleNamespace(name="meta-llama/Llama-3.1-8B-Instruct", device="cpu")
+    sender, receiver = ev.prepare_input_ids(
+        {"prompt_A": "context " * 10000, "prompt_B": "question " * 9000}, model, model)
+    assert sender.shape[-1] > 10000
+    assert receiver.shape[-1] > 9000
+    assert ev.input_lengths["sender_original"] == sender.shape[-1]
+    assert ev.truncation_count == 0
 
 
 def test_pair_loaded_once_and_calibration_once_per_dataset(sweep, offline, tmp_path):
@@ -230,7 +256,7 @@ def test_reused_calibration_matches_separate_single_alpha_runs(sweep, offline, t
 
 def test_sender_limits_logits_without_changing_cache(sweep, model):
     receiver = copy.deepcopy(model)
-    ev = sweep.SweepCommunicationEvaluator(Dataset(), Tokenizer(), False, 96)
+    ev = sweep.SweepCommunicationEvaluator(Dataset(), Tokenizer(), False)
     ids_a, ids_b = torch.tensor([[1, 4, 5]]), torch.tensor([[8, 9]])
     ev.prepare_input_ids = lambda *args: (ids_a, ids_b)
     with torch.no_grad():
@@ -308,14 +334,12 @@ def test_oom_discards_partial_score_and_continues(sweep, offline, tmp_path, monk
     assert result[1]["sample_index"] == 2
 
 
-@pytest.mark.parametrize("error_class", [torch.OutOfMemoryError, ValueError])
-def test_calibration_failure_skips_alphas_then_continues_dataset(sweep, offline, tmp_path, monkeypatch, error_class):
+def test_calibration_failure_skips_alphas_then_continues_dataset(sweep, offline, tmp_path, monkeypatch):
     native = sweep.SweepCommunicationEvaluator.inference
 
     def fail_calibration(self, *args):
         if self.evaluator.name == "tipsheets":
-            raise (torch.OutOfMemoryError if error_class is torch.OutOfMemoryError
-                   else sweep.InputLimitError)("context too long")
+            raise torch.OutOfMemoryError("simulated OOM")
         return native(self, *args)
 
     monkeypatch.setattr(sweep.SweepCommunicationEvaluator, "inference", fail_calibration)
