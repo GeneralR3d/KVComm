@@ -14,7 +14,7 @@
 # Submit from the repository root:
 #   mkdir -p logs
 #   sbatch run_mu_sweep.sbatch
-# The 35 evaluation cases share the time allocation above. Increase it at submission if
+# All mu/top-layers evaluation cases share the time allocation above. Increase it at submission if
 # your partition permits, for example: sbatch --time=24:00:00 run_mu_sweep.sbatch
 
 set -euo pipefail
@@ -64,38 +64,41 @@ PY
 
 "$KVCOMM_PYTHON" -m pip freeze > "logs/environment-${SLURM_JOB_ID}.txt"
 
-# Seven datasets x five mu values = 35 evaluation cases.
+# Evaluation cases = datasets x mu values x top_layers values.
 # Evaluate full datasets (--limit 0); calibration uses one example per dataset.
 TEST_TASKS=(countries tipsheets hotpotqa qasper musique multifieldqa_en twowikimqa)
 MUS=(0 0.25 0.5 0.75 1)
+TOP_LAYERS=(0.5 0.4 0.2)  # Set the top_layers values to sweep here.
 
-# Each mu starts a fresh process that loads one model pair and calibrates once
-# per dataset. Alpha is fixed at zero, so selection uses the Gaussian prior.
-# Its center is mu * (number_of_layers - 1); sigma stays at 10 layers.
-total_runs=$(( ${#TEST_TASKS[@]} * ${#MUS[@]} ))
-echo "Running $total_runs cases across ${#MUS[@]} mu values; full-dataset evaluation."
+# Each mu/top_layers pair starts a fresh process that loads one model pair and
+# calibrates once per dataset. Alpha is fixed at zero. The Gaussian prior is centered at
+# mu * (number_of_layers - 1); sigma stays at 10 layers.
+total_runs=$(( ${#TEST_TASKS[@]} * ${#MUS[@]} * ${#TOP_LAYERS[@]} ))
+echo "Running $total_runs cases across ${#MUS[@]} mu values and ${#TOP_LAYERS[@]} top_layers values; full-dataset evaluation."
 
 for mu in "${MUS[@]}"; do
-  # One CSV and JSONL companion per mu, isolated by Slurm job ID.
-  export KVCOMM_RESULTS_CSV="logs/mu-sweep-${SLURM_JOB_ID}-mu-${mu}-results.csv"
-  echo "Starting mu=$mu; communication results CSV: $KVCOMM_RESULTS_CSV"
+  for top_layers in "${TOP_LAYERS[@]}"; do
+    # One CSV and JSONL companion per mu/top_layers pair, isolated by Slurm job ID.
+    export KVCOMM_RESULTS_CSV="logs/mu-sweep-${SLURM_JOB_ID}-mu-${mu}-top-layers-${top_layers}-results.csv"
+    echo "Starting mu=$mu top_layers=$top_layers; communication results CSV: $KVCOMM_RESULTS_CSV"
 
-  "$KVCOMM_PYTHON" -u com_sweep.py \
-    --model_A google/gemma-3-1b-it \
-    --model_B google/gemma-3-1b-it \
-    --device cuda:0 \
-    --test_tasks "${TEST_TASKS[@]}" \
-    --alphas 0.0 \
-    --mu "$mu" \
-    --sigma 10 \
-    --top_layers 0.3 \
-    --calib_size 1 \
-    --limit 0 \
-    --seed 42 \
-    --results_csv "$KVCOMM_RESULTS_CSV" \
-    --run_name "mu-sweep-${SLURM_JOB_ID}-mu-${mu}"
+    "$KVCOMM_PYTHON" -u com_sweep.py \
+      --model_A meta-llama/Llama-3.2-3B-Instruct \
+      --model_B meta-llama/Llama-3.2-3B-Instruct \
+      --device cuda:0 \
+      --test_tasks "${TEST_TASKS[@]}" \
+      --alphas 0.0 \
+      --mu "$mu" \
+      --sigma 10 \
+      --top_layers "$top_layers" \
+      --calib_size 1 \
+      --limit 0 \
+      --seed 42 \
+      --results_csv "$KVCOMM_RESULTS_CSV" \
+      --run_name "mu-sweep-${SLURM_JOB_ID}-mu-${mu}-top-layers-${top_layers}"
 
-  echo "Finished mu=$mu. Check $KVCOMM_RESULTS_CSV and its JSONL companion for case results and failures."
+    echo "Finished mu=$mu top_layers=$top_layers. Check $KVCOMM_RESULTS_CSV and its JSONL companion for case results and failures."
+  done
 done
 
-echo "Mu sweep finished: $total_runs evaluation cases attempted. Check each mu's CSV and JSONL diagnostics for outcomes."
+echo "Mu/top-layers sweep finished: $total_runs evaluation cases attempted. Check each pair's CSV and JSONL diagnostics for outcomes."
