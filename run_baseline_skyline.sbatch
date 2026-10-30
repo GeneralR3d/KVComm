@@ -80,8 +80,8 @@ for task in "${TEST_TASKS[@]}"; do
   echo "Starting task=$task; output log: $case_log"
 
   "$KVCOMM_PYTHON" -u com.py \
-    --model_A meta-llama/Llama-3.2-3B-Instruct \
-    --model_B meta-llama/Llama-3.2-3B-Instruct \
+    --model_A google/gemma-3-1b-it \
+    --model_B google/gemma-3-1b-it \
     --device cuda:0 \
     --test_task "$task" \
     --do_test_baseline \

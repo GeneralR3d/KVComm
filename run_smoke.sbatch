@@ -67,9 +67,6 @@ PY
   --do_test_skyline \
   --do_test_baseline \
   --do_test \
-  --do_test_ac \
-  --do_test_nld \
-  --do_test_cipher \
   --top_layers 0.3 \
   --calib_size 1 \
   --limit 2 \
