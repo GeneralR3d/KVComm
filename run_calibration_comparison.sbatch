@@ -76,8 +76,8 @@ echo "[1/2] Original calibration"
   --test_task qasper \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 25 \
-  --limit 0 \
+  --calib_size 4 \
+  --limit 50 \
   --alpha 0.8 \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
@@ -93,8 +93,8 @@ echo "[2/2] Breakpoint calibration"
   --test_task qasper \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 25 \
-  --limit 0 \
+  --calib_size 4 \
+  --limit 50 \
   --breakpoint_calibration \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
