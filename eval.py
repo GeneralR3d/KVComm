@@ -5,6 +5,7 @@ from tqdm import tqdm
 import wandb
 from layer_importance import calc_layer_importance
 from collections import defaultdict
+from itertools import islice
 import time
 
 QA_INSTRUCTION = "Directly answer the question based on the context passage, no explanation is needed."
@@ -180,10 +181,22 @@ class BaselineEvaluator(SkylineEvaluator):
         input_ids = self.truncate_input(input_ids)
         return input_ids
 
+def clear_attention_tensors(cv):
+    if hasattr(cv, "B_attn_weights"):
+        cv.B_attn_weights.clear()
+    backbone = cv.B.model
+    if hasattr(backbone, "language_model"):
+        backbone = backbone.language_model
+    for block in backbone.layers:
+        if hasattr(block.self_attn, "attn_inputs"):
+            block.self_attn.attn_inputs = None
+
+
 class CommunicationEvaluator(SkylineEvaluator):
-    def __init__(self, evaluator, tokenizer, use_wandb, max_input_length):
+    def __init__(self, evaluator, tokenizer, use_wandb, max_input_length, *, score_f1=False):
         super().__init__(evaluator, tokenizer, use_wandb, max_input_length)
         self.name = "communication"
+        self.score_f1 = score_f1
         self.layer_importance_total = defaultdict(list)
     
     def truncate_input(self, input_ids_A, input_ids_B):
@@ -224,9 +237,11 @@ class CommunicationEvaluator(SkylineEvaluator):
         out_A = model(
             input_ids=input_ids_A, 
             use_cache=True, 
-            return_dict=True
+            return_dict=True,
+            logits_to_keep=1,
         )
         out_A_past_key_values = out_A.past_key_values
+        del out_A
 
         output = cv.generate(
             input_ids_B, 
@@ -240,23 +255,40 @@ class CommunicationEvaluator(SkylineEvaluator):
         return response
 
     def _test(self, model_A, cv, limit=None, do_calc_layer_importance=False):
-        progress_bar = tqdm(self.evaluator, desc=f"{self.name} result: 0.0000", disable=do_calc_layer_importance)
+        if do_calc_layer_importance:
+            self.layer_importance_total.clear()
+        f1_total = 0.0
+        count = 0
+        items = iter(self.evaluator)
+        if limit is not None:
+            items = islice(items, limit)
+        total = len(self.evaluator) if limit is None else min(limit, len(self.evaluator))
+        progress_bar = tqdm(items, total=total,
+                            desc=f"{self.name} result: 0.0000", disable=do_calc_layer_importance)
 
-        for i, item in enumerate(progress_bar):
-            if limit is not None and i >= limit:
-                break
-            response = self.inference(model_A, cv, item)
-
-            if do_calc_layer_importance:
-                cv.calc_attn_weights_from_qk()
-                self.layer_importance_total = calc_layer_importance(cv.B_attn_weights, model_A.name, self.layer_importance_total)
-            
-            self.evaluator.evaluate_item(item, response)
-            
-            result = self.evaluator.get_result()
-            progress_bar.set_description(f"{self.name} result: {result:.4f}")
-            
-        result = self.evaluator.get_result()
+        try:
+            for item in progress_bar:
+                try:
+                    response = self.inference(model_A, cv, item)
+                    if do_calc_layer_importance:
+                        cv.calc_attn_weights_from_qk()
+                        self.layer_importance_total = calc_layer_importance(
+                            cv.B_attn_weights, model_A.name, self.layer_importance_total)
+                finally:
+                    if do_calc_layer_importance:
+                        clear_attention_tensors(cv)
+                count += 1
+                if self.score_f1:
+                    f1_total += self.evaluator.score_item_f1(item, response)
+                    result = f1_total / count
+                else:
+                    self.evaluator.evaluate_item(item, response)
+                    result = self.evaluator.get_result()
+                progress_bar.set_description(f"{self.name} result: {result:.4f}")
+        finally:
+            progress_bar.close()
+        if not count:
+            raise ValueError("Cannot evaluate an empty dataset or zero examples")
         return result
     
     @torch.no_grad()

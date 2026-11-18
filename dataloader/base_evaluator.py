@@ -1,4 +1,4 @@
-from utils import f1_match
+from utils import f1_match, f1_score
 from typing import Dict, Any
 import random
 
@@ -43,6 +43,14 @@ class BaseEvaluator:
             f1_score = max(f1_score, f1_match(answer, response))
         self.f1_total += f1_score
         self.f1_count += 1
+
+    def score_item_f1(self, item, response):
+        # Some tasks store a list of references directly in the answer field.
+        answers = item['answers'] if self.multiple_answers else [item['answer']]
+        return max((f1_score(reference, response)
+                    for answer in answers
+                    for reference in (answer if isinstance(answer, list) else [answer])),
+                   default=0.0)
     
     def get_result(self) -> float:
         return self.f1_total / self.f1_count if self.f1_count > 0 else 0.0

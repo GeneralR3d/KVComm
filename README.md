@@ -146,3 +146,37 @@ python com.py \
 ```
 
 This automatically identifies which layers are most important for communication and selects them for the main evaluation.
+
+### Breakpoint calibration
+
+```bash
+python -u com.py --do_test --test_task qasper --breakpoint_calibration --top_layers 0.3 --calib_size 1 --limit 0
+```
+
+`--breakpoint_calibration` is off by default; omit it to use the existing
+fixed-`--alpha` selection and task metric. In `com.py`, enabling the flag uses
+`--calib_size` examples for attention tracing and the same `--calib_size`
+examples for each candidate set's mean answer F1. Both calibration stages use
+at most the available dataset size. F1 ties keep the first alpha interval.
+The winning layers are retained in the configuration, then evaluated once in
+a separate final run using the task's normal metric. Only this final run uses
+`--limit`: `0` uses all examples loaded by the task adapter, while a positive
+value caps the final run. For example, `--calib_size 5 --limit 100` traces 5
+examples, scores each candidate on those 5 examples, then evaluates the winner
+on up to 100 examples.
+
+In `com.py`, layer 0 reserves one slot by default for breakpoint, fixed-alpha,
+random, and layer-curve selection. Use `--no_always_include_layer_0` to remove
+that selection constraint. The communicator itself continues to share layer 0
+as before. Explicit `--layers_list` selections are preserved.
+
+Each run directory contains `calibration_candidates.csv` (midpoint alpha,
+exact alpha fraction, selected layers, answer F1) and
+`calibration_selection.json` (winner and candidate count). Candidate errors
+stop the run, preserve completed CSV rows, and do not produce a winner.
+Breakpoint calibration requires `--do_test` and a positive `--top_layers`
+budget of at least one layer; it cannot be combined with `--random_selection`
+or `--do_layer_curve`.
+
+Offline CPU regression tests (including tiny local Llama attention tracing):
+`python -m pytest -q tests/test_com.py`.
