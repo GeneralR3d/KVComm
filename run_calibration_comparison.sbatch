@@ -77,7 +77,7 @@ echo "[1/2] Original calibration"
   --do_test \
   --top_layers 0.3 \
   --calib_size 1 \
-  --limit 20 \
+  --limit 40 \
   --alpha 1.0 \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
@@ -94,7 +94,7 @@ echo "[2/2] Breakpoint calibration"
   --do_test \
   --top_layers 0.3 \
   --calib_size 1 \
-  --limit 20 \
+  --limit 40 \
   --breakpoint_calibration \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \

@@ -115,13 +115,14 @@ def calibrate_layer_sets(importance, communication_evaluator, model_A, model_B, 
         always_include_layer_0=cfg.always_include_layer_0)
     logging.info("Breakpoint calibration: %s distinct layer sets", len(candidates))
     winner = None
+    candidate_results = []
     previous_scoring = communication_evaluator.score_f1
     try:
         communication_evaluator.score_f1 = True
         with (Path(snapshot_path) / "calibration_candidates.csv").open("w", newline="", encoding="utf-8") as output:
             writer = csv.DictWriter(output, fieldnames=["alpha", "alpha_exact", "selected_layers", "f1"])
             writer.writeheader()
-            for midpoint, layers in candidates:
+            for candidate_index, (midpoint, layers) in enumerate(candidates, start=1):
                 set_seed(cfg.seed)
                 with communication_model(model_A, model_B, cfg, layers_list=list(layers)) as cv:
                     score = float(communication_evaluator.test(model_A, cv, limit=cfg.calib_size, no_wandb=True))
@@ -131,12 +132,22 @@ def calibrate_layer_sets(importance, communication_evaluator, model_A, model_B, 
                               selected_layers=list(layers), f1=score)
                 writer.writerow({**record, "selected_layers": json.dumps(record["selected_layers"])})
                 output.flush()
-                logging.info("Breakpoint candidate: %s", record)
+                candidate_results.append(record)
+                logging.info("Breakpoint candidate %d/%d: F1=%.6f | alpha=%.6f | layers=%s",
+                             candidate_index, len(candidates), score, record["alpha"],
+                             record["selected_layers"])
                 # Preserve the first interval in an F1 tie.
                 if winner is None or score > winner["f1"]:
                     winner = record
     finally:
         communication_evaluator.score_f1 = previous_scoring
+
+    comparison = ["Calibration F1 comparison (highest first; %d examples per set):" % cfg.calib_size]
+    for rank, record in enumerate(sorted(candidate_results, key=lambda item: item["f1"], reverse=True), start=1):
+        comparison.append(
+            f"  {rank}. F1={record['f1']:.6f} | alpha={record['alpha']:.6f}"
+            f" | layers={record['selected_layers']}" + ("  <-- selected" if record is winner else ""))
+    logging.info("\n%s", "\n".join(comparison))
 
     selection = {**winner, "candidate_count": len(candidates)}
     with (Path(snapshot_path) / "calibration_selection.json").open("w", encoding="utf-8") as output:
