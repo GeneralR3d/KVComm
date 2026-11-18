@@ -73,11 +73,11 @@ echo "[1/2] Original calibration"
   --model_A meta-llama/Llama-3.2-3B-Instruct \
   --model_B meta-llama/Llama-3.2-3B-Instruct \
   --device cuda:0 \
-  --test_task tipsheets \
+  --test_task hotpotqa \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 1 \
-  --limit 40 \
+  --calib_size 5 \
+  --limit 50 \
   --alpha 1.0 \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
@@ -90,11 +90,11 @@ echo "[2/2] Breakpoint calibration"
   --model_A meta-llama/Llama-3.2-3B-Instruct \
   --model_B meta-llama/Llama-3.2-3B-Instruct \
   --device cuda:0 \
-  --test_task tipsheets \
+  --test_task hotpotqa \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 1 \
-  --limit 40 \
+  --calib_size 5 \
+  --limit 50 \
   --breakpoint_calibration \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
