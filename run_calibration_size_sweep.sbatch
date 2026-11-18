@@ -78,7 +78,7 @@ for calib_size in {1..10}; do
     --model_A Qwen/Qwen2.5-3B-Instruct\
     --model_B Qwen/Qwen2.5-3B-Instruct\
     --device cuda:0 \
-    --test_task hotpotqa \
+    --test_task musique \
     --do_test \
     --top_layers 0.3 \
     --calib_size "$calib_size" \
@@ -95,7 +95,7 @@ for calib_size in {1..10}; do
     --model_A Qwen/Qwen2.5-3B-Instruct\
     --model_B Qwen/Qwen2.5-3B-Instruct\
     --device cuda:0 \
-    --test_task hotpotqa \
+    --test_task musique \
     --do_test \
     --top_layers 0.3 \
     --calib_size "$calib_size" \
