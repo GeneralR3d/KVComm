@@ -76,15 +76,15 @@ echo "Running both calibration methods across ${#TEST_TASKS[@]} full datasets wi
 for test_task in "${TEST_TASKS[@]}"; do
   echo "[1/2] Original calibration: $test_task"
   "$KVCOMM_PYTHON" -u com.py \
-    --model_A Qwen/Qwen2.5-3B-Instruct \
-    --model_B Qwen/Qwen2.5-3B-Instruct \
+    --model_A meta/Llama-3-8B-Instruct \
+    --model_B meta/Llama-3-8B-Instruct \
     --device cuda:0 \
     --test_task "$test_task" \
     --do_test \
     --top_layers 0.3 \
     --calib_size 5 \
     --limit 0 \
-    --alpha 0.8 \
+    --alpha 1 \
     --seed 42 \
     --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
     --results_json "logs/calibration-comparison-${SLURM_JOB_ID}.json" \
@@ -93,8 +93,8 @@ for test_task in "${TEST_TASKS[@]}"; do
 
   echo "[2/2] Breakpoint calibration: $test_task"
   "$KVCOMM_PYTHON" -u com.py \
-    --model_A Qwen/Qwen2.5-3B-Instruct \
-    --model_B Qwen/Qwen2.5-3B-Instruct \
+    --model_A meta/Llama-3-8B-Instruct \
+    --model_B meta/Llama-3-8B-Instruct \
     --device cuda:0 \
     --test_task "$test_task" \
     --do_test \
