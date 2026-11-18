@@ -76,7 +76,7 @@ echo "[1/2] Original calibration"
   --test_task hotpotqa \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 5 \
+  --calib_size 1 \
   --limit 50 \
   --alpha 1.0 \
   --seed 42 \
@@ -93,7 +93,7 @@ echo "[2/2] Breakpoint calibration"
   --test_task hotpotqa \
   --do_test \
   --top_layers 0.3 \
-  --calib_size 5 \
+  --calib_size 1 \
   --limit 50 \
   --breakpoint_calibration \
   --seed 42 \
