@@ -70,8 +70,8 @@ PY
 
 echo "[1/2] Original calibration"
 "$KVCOMM_PYTHON" -u com.py \
-  --model_A Qwen/Qwen2.5-3B-Instruct \
-  --model_B Qwen/Qwen2.5-3B-Instruct \
+  --model_A meta-llama/Llama-3.2-3B-Instruct\
+  --model_B meta-llama/Llama-3.2-3B-Instruct\
   --device cuda:0 \
   --test_task qasper \
   --do_test \
@@ -87,8 +87,8 @@ echo "[1/2] Original calibration"
 
 echo "[2/2] Breakpoint calibration"
 "$KVCOMM_PYTHON" -u com.py \
-  --model_A Qwen/Qwen2.5-3B-Instruct \
-  --model_B Qwen/Qwen2.5-3B-Instruct \
+  --model_A meta-llama/Llama-3.2-3B-Instruct\
+  --model_B meta-llama/Llama-3.2-3B-Instruct\
   --device cuda:0 \
   --test_task qasper \
   --do_test \
