@@ -178,5 +178,15 @@ Breakpoint calibration requires `--do_test` and a positive `--top_layers`
 budget of at least one layer; it cannot be combined with `--random_selection`
 or `--do_layer_curve`.
 
+`run_calibration_comparison.sbatch` saves the two final evaluation results to
+`logs/calibration-comparison-JOB_ID.csv` and
+`logs/calibration-comparison-JOB_ID.json`. Each successful run is saved before
+the next run starts. The CSV includes the method, model pair, seed, layer
+budget, calibration/final limits, selected alpha and layers, calibration F1
+(breakpoint only), final task metric (`communication_result`), and snapshot
+directory. The JSON also includes the original input configuration. Candidate
+F1 and the final task metric remain separate. For other `com.py` jobs, pass
+`--results_csv PATH` and/or `--results_json PATH` to save the same records.
+
 Offline CPU regression tests (including tiny local Llama attention tracing):
 `python -m pytest -q tests/test_com.py`.

@@ -80,6 +80,8 @@ echo "[1/2] Original calibration"
   --limit 20 \
   --alpha 1.0 \
   --seed 42 \
+  --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
+  --results_json "logs/calibration-comparison-${SLURM_JOB_ID}.json" \
   --run_name "calibration-original-${SLURM_JOB_ID}" \
   2>&1 | tee "logs/calibration-original-${SLURM_JOB_ID}.out"
 
@@ -95,8 +97,11 @@ echo "[2/2] Breakpoint calibration"
   --limit 20 \
   --breakpoint_calibration \
   --seed 42 \
+  --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
+  --results_json "logs/calibration-comparison-${SLURM_JOB_ID}.json" \
   --run_name "calibration-breakpoint-${SLURM_JOB_ID}" \
   2>&1 | tee "logs/calibration-breakpoint-${SLURM_JOB_ID}.out"
 
 echo "Comparison complete. Check the calibration-original and calibration-breakpoint logs for job ${SLURM_JOB_ID}."
+echo "Final comparison results: logs/calibration-comparison-${SLURM_JOB_ID}.csv and logs/calibration-comparison-${SLURM_JOB_ID}.json"
 echo "Snapshot logs and breakpoint candidate scores are saved under snapshots/."

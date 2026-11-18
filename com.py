@@ -8,7 +8,7 @@ import csv
 import json
 import math
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.trainer_utils import set_seed
@@ -21,6 +21,12 @@ from dataloader import get_evaluator
 from eval import SkylineEvaluator, CommunicationEvaluator, BaselineEvaluator, ACEvaluator, NLDEvaluator, CipherEvaluator, clear_attention_tensors
 from layer_importance import get_top_layers, get_layer_ranking, get_layer_scores, enumerate_layer_candidates
 import random
+
+RESULT_CSV_FIELDS = [
+    "run_name", "calibration_method", "test_task", "model_A", "model_B", "seed",
+    "top_layers", "calib_size", "limit", "alpha", "selected_layers",
+    "calibration_f1", "communication_result", "snapshot_path",
+]
 
 @dataclass
 class AlignConfig:
@@ -73,6 +79,8 @@ class AlignConfig:
     wandb_tags: str = ""  # comma-separated tags
     # Logging configuration
     log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    results_csv: str = ""
+    results_json: str = ""
 
 
 @contextmanager
@@ -143,7 +151,71 @@ def calibrate_layer_sets(importance, communication_evaluator, model_A, model_B, 
     return winner["f1"]
 
 
+def validate_result_files(cfg):
+    if not cfg.results_csv and not cfg.results_json:
+        return
+    if not cfg.do_test or cfg.do_layer_curve:
+        raise ValueError("Result exports require do_test without do_layer_curve")
+    if cfg.results_csv and cfg.results_json and Path(cfg.results_csv).resolve() == Path(cfg.results_json).resolve():
+        raise ValueError("CSV and JSON results must use distinct files")
+    if cfg.results_csv:
+        path = Path(cfg.results_csv)
+        if path.exists() and path.stat().st_size:
+            with path.open(newline="", encoding="utf-8") as output:
+                if next(csv.reader(output), None) != RESULT_CSV_FIELDS:
+                    raise ValueError(f"Unexpected CSV header in {path}")
+    if cfg.results_json:
+        path = Path(cfg.results_json)
+        if path.exists() and path.stat().st_size:
+            records = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+                raise ValueError(f"JSON results must contain a list of run records: {path}")
+
+
+def save_communication_result(cfg, configuration, run_name, snapshot_path, layers, result, calibration_f1):
+    """Append a completed final evaluation, keeping candidate F1 separate."""
+    if not cfg.results_csv and not cfg.results_json:
+        return
+    method = "original"
+    if cfg.breakpoint_calibration:
+        method = "breakpoint"
+    elif cfg.random_selection:
+        method = "random"
+    elif cfg.top_layers <= 0:
+        method = "manual"
+    record = dict(
+        run_name=run_name, calibration_method=method, test_task=cfg.test_task,
+        model_A=cfg.model_A, model_B=cfg.model_B, seed=cfg.seed,
+        top_layers=cfg.top_layers, calib_size=cfg.calib_size, limit=configuration["limit"],
+        alpha=float(cfg.alpha), selected_layers=[int(layer) for layer in layers],
+        calibration_f1=calibration_f1, communication_result=float(result),
+        snapshot_path=str(Path(snapshot_path).resolve()), configuration=configuration,
+    )
+    # Serialize before writing so unsupported or non-finite values cannot leave a partial row.
+    json.dumps(record, allow_nan=False)
+    if cfg.results_csv:
+        path = Path(cfg.results_csv)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", newline="", encoding="utf-8") as output:
+            writer = csv.DictWriter(output, fieldnames=RESULT_CSV_FIELDS)
+            if output.tell() == 0:
+                writer.writeheader()
+            row = {key: record[key] for key in RESULT_CSV_FIELDS}
+            row["selected_layers"] = json.dumps(record["selected_layers"])
+            writer.writerow(row)
+        logging.info("Final result saved to %s", path)
+    if cfg.results_json:
+        path = Path(cfg.results_json)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        records = json.loads(path.read_text(encoding="utf-8")) if path.exists() and path.stat().st_size else []
+        records.append(record)
+        path.write_text(json.dumps(records, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        logging.info("Final result saved to %s", path)
+
+
 def main(cfg: AlignConfig):
+    validate_result_files(cfg)
+    configuration = asdict(cfg)
     if cfg.breakpoint_calibration:
         if not cfg.do_test or cfg.random_selection or cfg.do_layer_curve:
             raise ValueError("breakpoint_calibration requires do_test and cannot use random_selection or do_layer_curve")
@@ -219,6 +291,7 @@ def main(cfg: AlignConfig):
         baseline_evaluator = BaselineEvaluator(evaluator, tokenizer, cfg.use_wandb, cfg.max_input_length)
         results = baseline_evaluator.test(model_A, model_B, limit=cfg.limit)
     if cfg.do_test:
+        calibration_f1 = None
         communication_evaluator = CommunicationEvaluator(evaluator, tokenizer, cfg.use_wandb, cfg.max_input_length)
         if cfg.top_layers > 0:
             text_config = getattr(model_A.config, "text_config", model_A.config)
@@ -238,8 +311,8 @@ def main(cfg: AlignConfig):
                     importance = {sender: communication_evaluator.layer_importance_total[receiver]
                                   for sender, receiver in cv.layer_map.items()}
                 if cfg.breakpoint_calibration:
-                    calibrate_layer_sets(importance, communication_evaluator, model_A, model_B,
-                                         cfg, final_snapshot_path)
+                    calibration_f1 = calibrate_layer_sets(
+                        importance, communication_evaluator, model_A, model_B, cfg, final_snapshot_path)
                 else:
                     cfg = get_top_layers(importance, cfg)
         elif cfg.do_layer_curve:
@@ -256,6 +329,8 @@ def main(cfg: AlignConfig):
                 logging.info("Final evaluation with calibrated layers %s; limit=%s", cfg.layers_list, cfg.limit)
             with communication_model(model_A, model_B, cfg, layers_list=cfg.layers_list) as cv:
                 results = communication_evaluator.test(model_A, cv, limit=cfg.limit)
+            save_communication_result(cfg, configuration, run_name, final_snapshot_path,
+                                      cv.layers_list, results, calibration_f1)
         elif cfg.do_layer_curve:
             results = []
             for i in range(len(layer_ranking)):

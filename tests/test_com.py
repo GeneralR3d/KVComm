@@ -5,6 +5,7 @@ import csv
 from fractions import Fraction
 import importlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -335,3 +336,77 @@ def test_real_cpu_tracing_releases_tensors_and_restores_attention(com, offline, 
     assert trace_calls == ["first", "second"]
     assert all(value == 1 for value in sender_logits)
     assert all(type(block.self_attn) is LlamaAttention for block in offline.loaded[1].model.layers)
+
+
+def test_comparison_outputs_save_final_results_and_configurations(com, offline, tmp_path):
+    results_csv = tmp_path / "logs" / "comparison.csv"
+    results_json = tmp_path / "logs" / "comparison.json"
+    for breakpoint in (False, True):
+        cfg = config(com, tmp_path / "runs", breakpoint_calibration=breakpoint,
+                     results_csv=str(results_csv), results_json=str(results_json), limit=0)
+        assert com.main(cfg) == 1.0
+
+    with results_csv.open() as output:
+        rows = list(csv.DictReader(output))
+    assert [row["calibration_method"] for row in rows] == ["original", "breakpoint"]
+    assert [float(row["communication_result"]) for row in rows] == [1.0, 1.0]
+    assert rows[0]["calibration_f1"] == ""
+    assert float(rows[1]["calibration_f1"]) == pytest.approx(0.8)
+    assert all(json.loads(row["selected_layers"]) == [0, 2] for row in rows)
+    assert all(row["limit"] == "0" and row["calib_size"] == "1" for row in rows)
+    assert rows[0]["run_name"] != rows[1]["run_name"]
+
+    records = json.loads(results_json.read_text())
+    assert [record["calibration_method"] for record in records] == ["original", "breakpoint"]
+    assert records[0]["calibration_f1"] is None
+    assert records[1]["calibration_f1"] == pytest.approx(0.8)
+    assert all(record["selected_layers"] == [0, 2] for record in records)
+    assert all(record["communication_result"] == 1.0 for record in records)
+    assert all(record["configuration"]["limit"] == 0 for record in records)
+    assert all(record["configuration"]["layers_list"] == [-1] for record in records)
+    assert records[1]["configuration"]["breakpoint_calibration"] is True
+    assert all((tmp_path / "runs") in Path(record["snapshot_path"]).parents
+               for record in records)
+
+
+@pytest.mark.parametrize("failure_stage", ["tracing", "final"])
+def test_completed_results_survive_failure_of_second_run(com, offline, tmp_path, monkeypatch, failure_stage):
+    import eval as evaluation
+    results_csv = tmp_path / "comparison.csv"
+    results_json = tmp_path / "comparison.json"
+    overrides = dict(results_csv=str(results_csv), results_json=str(results_json))
+    com.main(config(com, tmp_path / "runs", **overrides))
+
+    original = evaluation.CommunicationEvaluator.inference
+
+    def fail(self, sender, cv, item):
+        if ((failure_stage == "tracing" and cv.apply_attn_tracer)
+                or (failure_stage == "final" and not cv.apply_attn_tracer and not self.score_f1)):
+            raise torch.OutOfMemoryError("second run failed")
+        return original(self, sender, cv, item)
+
+    monkeypatch.setattr(evaluation.CommunicationEvaluator, "inference", fail)
+    with pytest.raises(torch.OutOfMemoryError):
+        com.main(config(com, tmp_path / "runs", breakpoint_calibration=True, **overrides))
+    with results_csv.open() as output:
+        rows = list(csv.DictReader(output))
+    assert len(rows) == 1 and rows[0]["calibration_method"] == "original"
+    records = json.loads(results_json.read_text())
+    assert len(records) == 1 and records[0]["calibration_method"] == "original"
+
+
+def test_csv_and_json_results_require_separate_files(com, offline, tmp_path):
+    path = str(tmp_path / "comparison.csv")
+    with pytest.raises(ValueError, match="distinct"):
+        com.main(config(com, tmp_path / "runs", results_csv=path, results_json=path))
+    assert not offline.loaded
+
+
+@pytest.mark.parametrize("extension, contents", [("csv", "wrong,header\n"), ("json", '{}')])
+def test_incompatible_result_files_are_preserved(com, offline, tmp_path, extension, contents):
+    path = tmp_path / f"comparison.{extension}"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        com.main(config(com, tmp_path / "runs", **{f"results_{extension}": str(path)}))
+    assert path.read_text() == contents
+    assert not offline.loaded
