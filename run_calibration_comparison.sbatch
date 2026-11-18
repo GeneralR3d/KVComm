@@ -70,15 +70,15 @@ PY
 
 echo "[1/2] Original calibration"
 "$KVCOMM_PYTHON" -u com.py \
-  --model_A meta-llama/Llama-3.2-3B-Instruct \
-  --model_B meta-llama/Llama-3.2-3B-Instruct \
+  --model_A Qwen/Qwen2.5-3B-Instruct \
+  --model_B Qwen/Qwen2.5-3B-Instruct \
   --device cuda:0 \
   --test_task hotpotqa \
   --do_test \
   --top_layers 0.3 \
   --calib_size 5 \
   --limit 50 \
-  --alpha 1.0 \
+  --alpha 0.8 \
   --seed 42 \
   --results_csv "logs/calibration-comparison-${SLURM_JOB_ID}.csv" \
   --results_json "logs/calibration-comparison-${SLURM_JOB_ID}.json" \
@@ -87,8 +87,8 @@ echo "[1/2] Original calibration"
 
 echo "[2/2] Breakpoint calibration"
 "$KVCOMM_PYTHON" -u com.py \
-  --model_A meta-llama/Llama-3.2-3B-Instruct \
-  --model_B meta-llama/Llama-3.2-3B-Instruct \
+  --model_A Qwen/Qwen2.5-3B-Instruct \
+  --model_B Qwen/Qwen2.5-3B-Instruct \
   --device cuda:0 \
   --test_task hotpotqa \
   --do_test \
