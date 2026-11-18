@@ -73,7 +73,7 @@ echo "[1/2] Original calibration"
   --model_A Qwen/Qwen2.5-3B-Instruct\
   --model_B Qwen/Qwen2.5-3B-Instruct\
   --device cuda:0 \
-  --test_task qasper \
+  --test_task musique \
   --do_test \
   --top_layers 0.3 \
   --calib_size 4 \
@@ -90,7 +90,7 @@ echo "[2/2] Breakpoint calibration"
   --model_A Qwen/Qwen2.5-3B-Instruct\
   --model_B Qwen/Qwen2.5-3B-Instruct\
   --device cuda:0 \
-  --test_task qasper \
+  --test_task musique \
   --do_test \
   --top_layers 0.3 \
   --calib_size 4 \
