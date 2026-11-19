@@ -72,13 +72,13 @@ PY
 # Results from all 20 runs append to one CSV and JSON, including calib_size and method.
 echo "Running 20 comparisons: 2 methods for each calibration size from 1 through 10."
 
-for calib_size in {1..10}; do
+for calib_size in {1,9}; do
   echo "[1/2] Original calibration (calib_size=$calib_size)"
   "$KVCOMM_PYTHON" -u com.py \
     --model_A Qwen/Qwen2.5-3B-Instruct\
     --model_B Qwen/Qwen2.5-3B-Instruct\
     --device cuda:0 \
-    --test_task musique \
+    --test_task qasper \
     --do_test \
     --top_layers 0.3 \
     --calib_size "$calib_size" \
@@ -95,7 +95,7 @@ for calib_size in {1..10}; do
     --model_A Qwen/Qwen2.5-3B-Instruct\
     --model_B Qwen/Qwen2.5-3B-Instruct\
     --device cuda:0 \
-    --test_task musique \
+    --test_task qasper \
     --do_test \
     --top_layers 0.3 \
     --calib_size "$calib_size" \
