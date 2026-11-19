@@ -76,8 +76,8 @@ echo "Running both calibration methods across ${#TEST_TASKS[@]} full datasets wi
 for test_task in "${TEST_TASKS[@]}"; do
   echo "[1/2] Original calibration: $test_task"
   "$KVCOMM_PYTHON" -u com.py \
-    --model_A meta/Llama-3-8B-Instruct \
-    --model_B meta/Llama-3-8B-Instruct \
+    --model_A meta-llama/Llama-3.2-3B-Instruct \
+    --model_B meta-llama/Llama-3.2-3B-Instruct \
     --device cuda:0 \
     --test_task "$test_task" \
     --do_test \
@@ -93,8 +93,8 @@ for test_task in "${TEST_TASKS[@]}"; do
 
   echo "[2/2] Breakpoint calibration: $test_task"
   "$KVCOMM_PYTHON" -u com.py \
-    --model_A meta/Llama-3-8B-Instruct \
-    --model_B meta/Llama-3-8B-Instruct \
+    --model_A meta-llama/Llama-3.2-3B-Instruct \
+    --model_B meta-llama/Llama-3.2-3B-Instruct \
     --device cuda:0 \
     --test_task "$test_task" \
     --do_test \
