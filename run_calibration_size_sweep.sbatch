@@ -14,7 +14,7 @@
 # Submit from the repository root:
 #   mkdir -p logs
 #   sbatch run_calibration_size_sweep.sbatch
-# All 20 runs share the time allocation above; increase it at submission if needed
+# All 60 runs share the time allocation above; increase it at submission if needed
 # and permitted by the partition: sbatch --time=24:00:00 run_calibration_size_sweep.sbatch
 
 set -euo pipefail
@@ -64,52 +64,54 @@ PY
 
 "$KVCOMM_PYTHON" -m pip freeze > "logs/environment-${SLURM_JOB_ID}.txt"
 
-# Compare both calibration methods for each calibration size from 1 through 10.
-# Keep Qwen2.5-3B, Qasper, 50 final-evaluation examples, top_layers=0.3, and seed=42.
-# The original method uses fixed alpha=0.8; breakpoint calibration searches distinct sets.
+# Compare both calibration methods for each task and calibration size from 1 through 10.
+# Keep Llama-3.2-3B, 50 final-evaluation examples, top_layers=0.3, and seed=42.
+# The original method uses fixed alpha=1.0; breakpoint calibration searches distinct sets.
 # Layer 0 uses one selection slot in both runs, following com.py's default.
 # Separate Python processes release each model pair before the next run.
-# Results from all 20 runs append to one CSV and JSON, including calib_size and method.
-echo "Running 20 comparisons: 2 methods for each calibration size from 1 through 10."
+# Results from all 60 runs append to one CSV and JSON, including task, calib_size, and method.
+echo "Running 60 comparisons: 3 tasks, 2 methods, and calibration sizes from 1 through 10."
 
-for calib_size in {1,9}; do
-  echo "[1/2] Original calibration (calib_size=$calib_size)"
-  "$KVCOMM_PYTHON" -u com.py \
-    --model_A Qwen/Qwen2.5-3B-Instruct\
-    --model_B Qwen/Qwen2.5-3B-Instruct\
-    --device cuda:0 \
-    --test_task qasper \
-    --do_test \
-    --top_layers 0.3 \
-    --calib_size "$calib_size" \
-    --limit 50 \
-    --alpha 0.8 \
-    --seed 42 \
-    --results_csv "logs/calibration-size-sweep-${SLURM_JOB_ID}.csv" \
-    --results_json "logs/calibration-size-sweep-${SLURM_JOB_ID}.json" \
-    --run_name "calibration-original-size-${calib_size}-${SLURM_JOB_ID}" \
-    2>&1 | tee "logs/calibration-original-size-${calib_size}-${SLURM_JOB_ID}.out"
+for task in qasper hotpotqa musique; do
+  for calib_size in {1..10}; do
+    echo "[1/2] Original calibration (task=$task, calib_size=$calib_size)"
+    "$KVCOMM_PYTHON" -u com.py \
+      --model_A meta-llama/Llama-3.2-3B-Instruct\
+      --model_B meta-llama/Llama-3.2-3B-Instruct\
+      --device cuda:0 \
+      --test_task "$task" \
+      --do_test \
+      --top_layers 0.3 \
+      --calib_size "$calib_size" \
+      --limit 50 \
+      --alpha 1.0 \
+      --seed 42 \
+      --results_csv "logs/calibration-size-sweep-${SLURM_JOB_ID}.csv" \
+      --results_json "logs/calibration-size-sweep-${SLURM_JOB_ID}.json" \
+      --run_name "calibration-original-${task}-size-${calib_size}-${SLURM_JOB_ID}" \
+      2>&1 | tee "logs/calibration-original-${task}-size-${calib_size}-${SLURM_JOB_ID}.out"
 
-  echo "[2/2] Breakpoint calibration (calib_size=$calib_size)"
-  "$KVCOMM_PYTHON" -u com.py \
-    --model_A Qwen/Qwen2.5-3B-Instruct\
-    --model_B Qwen/Qwen2.5-3B-Instruct\
-    --device cuda:0 \
-    --test_task qasper \
-    --do_test \
-    --top_layers 0.3 \
-    --calib_size "$calib_size" \
-    --limit 50 \
-    --breakpoint_calibration \
-    --seed 42 \
-    --results_csv "logs/calibration-size-sweep-${SLURM_JOB_ID}.csv" \
-    --results_json "logs/calibration-size-sweep-${SLURM_JOB_ID}.json" \
-    --run_name "calibration-breakpoint-size-${calib_size}-${SLURM_JOB_ID}" \
-    2>&1 | tee "logs/calibration-breakpoint-size-${calib_size}-${SLURM_JOB_ID}.out"
+    echo "[2/2] Breakpoint calibration (task=$task, calib_size=$calib_size)"
+    "$KVCOMM_PYTHON" -u com.py \
+      --model_A meta-llama/Llama-3.2-3B-Instruct\
+      --model_B meta-llama/Llama-3.2-3B-Instruct\
+      --device cuda:0 \
+      --test_task "$task" \
+      --do_test \
+      --top_layers 0.3 \
+      --calib_size "$calib_size" \
+      --limit 50 \
+      --breakpoint_calibration \
+      --seed 42 \
+      --results_csv "logs/calibration-size-sweep-${SLURM_JOB_ID}.csv" \
+      --results_json "logs/calibration-size-sweep-${SLURM_JOB_ID}.json" \
+      --run_name "calibration-breakpoint-${task}-size-${calib_size}-${SLURM_JOB_ID}" \
+      2>&1 | tee "logs/calibration-breakpoint-${task}-size-${calib_size}-${SLURM_JOB_ID}.out"
 
+  done
 done
 
 echo "Calibration-size sweep complete for job ${SLURM_JOB_ID}."
 echo "Final comparison results: logs/calibration-size-sweep-${SLURM_JOB_ID}.csv and logs/calibration-size-sweep-${SLURM_JOB_ID}.json"
-echo "Per-run logs include the calibration method and size in their filenames."
+echo "Per-run logs include the task, calibration method, and size in their filenames."
 echo "Snapshot logs and breakpoint candidate scores are saved under snapshots/."
